@@ -5552,12 +5552,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-router-dom@npm:^6.14.1":
-  version: 6.23.1
-  resolution: "react-router-dom@npm:6.23.1"
+"react-router-dom@npm:^6.30.1":
+  version: 6.30.1
+  resolution: "react-router-dom@npm:6.30.1"
   dependencies:
-    "@remix-run/router": "npm:1.16.1"
-    react-router: "npm:6.23.1"
+    "@remix-run/router": 1.23.0
+    react-router: 6.30.1
   peerDependencies:
     react: ">=16.8"
     react-dom: ">=16.8"
@@ -5565,7 +5565,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-router@npm:6.23.1, react-router@npm:^6.14.2":
+"react-router@npm:^6.14.2":
   version: 6.23.1
   resolution: "react-router@npm:6.23.1"
   dependencies:
