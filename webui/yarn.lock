@@ -859,7 +859,7 @@ __metadata:
       optional: true
     "@types/react":
       optional: true
-  checksum: 8/b9d6cf638774e65924adf6f58ad50639c55050b33dc6223aa74686f733e137d173b4594b28be70e8ea3baf413a7fcd3bee40d35e3af12a42b7ba03def71ea217
+  checksum: 92618aaefc85b4d4a6012dba48fe4b4936db45c1afd3436b148c81d8b8d0a001c57fd654bd101f94077979f1cf4e3ad5a7e5dd24a6f1b666f3d2e23d75a63f84
   languageName: node
   linkType: hard
 
@@ -3355,9 +3355,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"file-selector@npm:^0.6.0":
-  version: 0.6.0
-  resolution: "file-selector@npm:0.6.0"
+"file-selector@npm:^2.1.0":
+  version: 2.1.2
+  resolution: "file-selector@npm:2.1.2"
   dependencies:
     tslib: "npm:^2.4.0"
   checksum: 6add4098ae07fd1e9050b1e8d3fd9f128680c1d6648c0676af54ace4586e6e5bfcb8fdfa45b69e9131ffd8175bf630d54a445a5facf9be244f85b99ce309183e
@@ -5072,7 +5072,7 @@ __metadata:
     "@eslint/js": ^9.15.0
     "@mui/base": ^5.0.0-beta.9
     "@mui/icons-material": ^5.13.7
-    "@mui/material": ^5.18.0
+    "@mui/material": ^5.13.7
     "@playwright/test": ^1.49.0
     "@stylistic/eslint-plugin": ^2.11.0
     "@types/babel__core": ^7
@@ -5552,13 +5552,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-dropzone@npm:^14.2.3":
-  version: 14.2.3
-  resolution: "react-dropzone@npm:14.2.3"
+"react-dropzone@npm:^14.3.8":
+  version: 14.3.8
+  resolution: "react-dropzone@npm:14.3.8"
   dependencies:
-    attr-accept: "npm:^2.2.2"
-    file-selector: "npm:^0.6.0"
-    prop-types: "npm:^15.8.1"
+    attr-accept: ^2.2.4
+    file-selector: ^2.1.0
+    prop-types: ^15.8.1
   peerDependencies:
     react: ">= 16.8 || 18.0.0"
   checksum: 34cf1758a896795b579adab5f9cdc144330577ab1826a0b66ff9daa8c60a80ed6b31b8f989647664f2548cfe00b336e9c31a2f3dd8de43111c8318fcc89b279c
@@ -5620,12 +5620,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-router-dom@npm:^6.14.1":
-  version: 6.23.1
-  resolution: "react-router-dom@npm:6.23.1"
+"react-router-dom@npm:^6.30.1":
+  version: 6.30.1
+  resolution: "react-router-dom@npm:6.30.1"
   dependencies:
-    "@remix-run/router": "npm:1.16.1"
-    react-router: "npm:6.23.1"
+    "@remix-run/router": 1.23.0
+    react-router: 6.30.1
   peerDependencies:
     react: ">=16.8"
     react-dom: ">=16.8"
@@ -5633,7 +5633,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-router@npm:6.23.1, react-router@npm:^6.14.2":
+"react-router@npm:^6.14.2":
   version: 6.23.1
   resolution: "react-router@npm:6.23.1"
   dependencies:
