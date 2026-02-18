@@ -40,7 +40,7 @@
         "@emotion/styled": "^11.11.0",
         "@mdit/plugin-alert": "^0.22.3",
         "@mui/base": "^5.0.0-beta.9",
-        "@mui/icons-material": "^5.13.7",
+        "@mui/icons-material": "^5.18.0",
         "@mui/material": "^5.13.7",
         "@mui/system": "^5.15.15",
         "@mui/x-charts": "^6.19",
