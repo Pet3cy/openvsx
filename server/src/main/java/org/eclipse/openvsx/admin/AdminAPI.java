@@ -9,36 +9,51 @@
  ********************************************************************************/
 package org.eclipse.openvsx.admin;
 
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import java.net.URI;
+import java.time.Period;
+import java.time.format.DateTimeParseException;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
+
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.openvsx.LocalRegistryService;
 import org.eclipse.openvsx.entities.AdminStatistics;
 import org.eclipse.openvsx.entities.NamespaceMembership;
 import org.eclipse.openvsx.entities.PersistedLog;
-import org.eclipse.openvsx.entities.UserData;
-import org.eclipse.openvsx.json.*;
+import org.eclipse.openvsx.json.AdminStatisticsJson;
+import org.eclipse.openvsx.json.ChangeNamespaceJson;
+import org.eclipse.openvsx.json.ExtensionJson;
+import org.eclipse.openvsx.json.NamespaceJson;
+import org.eclipse.openvsx.json.NamespaceMembershipListJson;
+import org.eclipse.openvsx.json.PersistedLogJson;
+import org.eclipse.openvsx.json.ResultJson;
+import org.eclipse.openvsx.json.StatsJson;
+import org.eclipse.openvsx.json.TargetPlatformVersionJson;
+import org.eclipse.openvsx.json.UserPublishInfoJson;
 import org.eclipse.openvsx.repositories.RepositoryService;
 import org.eclipse.openvsx.search.SearchUtilService;
 import org.eclipse.openvsx.util.*;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.util.Streamable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.net.URI;
-import java.time.Period;
-import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
-import java.util.stream.Collectors;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 
 @RestController
 @ApiResponse(
@@ -50,17 +65,20 @@ public class AdminAPI {
 
     private final RepositoryService repositories;
     private final AdminService admins;
+    private final LogService logs;
     private final LocalRegistryService local;
     private final SearchUtilService search;
 
     public AdminAPI(
             RepositoryService repositories,
             AdminService admins,
+            LogService logs,
             LocalRegistryService local,
             SearchUtilService search
     ) {
         this.repositories = repositories;
         this.admins = admins;
+        this.logs = logs;
         this.local = local;
         this.search = search;
     }
@@ -168,6 +186,40 @@ public class AdminAPI {
         }
     }
 
+    @GetMapping(
+        path = "/admin/logs",
+        produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<Page<PersistedLogJson>> getLog(
+            Pageable pageable,
+            @RequestParam(name = "period", required = false) String periodString
+    ) {
+        try {
+            admins.checkAdminUser();
+
+            Page<PersistedLog> logsPage;
+            if (StringUtils.isEmpty(periodString)) {
+                logsPage = repositories.findPersistedLogsPaginated(pageable);
+            } else {
+                try {
+                    var period = Period.parse(periodString);
+                    var now = TimeUtil.getCurrentUTC();
+                    logsPage = repositories.findPersistedLogsAfterPaginated(now.minus(period), pageable);
+                } catch (DateTimeParseException _) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid period");
+                }
+            }
+
+            return ResponseEntity.ok(logsPage.map(log -> {
+                var timestamp = log.getTimestamp().minusNanos(log.getTimestamp().getNano());
+                return new PersistedLogJson(timestamp.toString(), log.getUser().getLoginName(), log.getMessage());
+            }));
+        } catch (ErrorResultException exc) {
+            var status = exc.getStatus() != null ? exc.getStatus() : HttpStatus.BAD_REQUEST;
+            throw new ResponseStatusException(status);
+        }
+    }
+
     private String toString(PersistedLog log) {
         var timestamp = log.getTimestamp().minusNanos(log.getTimestamp().getNano());
         return timestamp + "\t" + log.getUser().getLoginName() + "\t" + log.getMessage();
@@ -184,7 +236,7 @@ public class AdminAPI {
             search.updateSearchIndex(true);
 
             var result = ResultJson.success("Updated search index");
-            admins.logAdminAction(adminUser, result);
+            logs.logAction(adminUser, result);
             return ResponseEntity.ok(result);
         } catch (ErrorResultException exc) {
             return exc.toResponseEntity();
@@ -255,7 +307,8 @@ public class AdminAPI {
     ) {
         try {
             var adminUser = admins.checkAdminUser(tokenValue);
-            return deleteExtension(adminUser, namespaceName, extensionName, targetVersions);
+            var result = admins.deleteExtension(adminUser, namespaceName, extensionName, targetVersions);
+            return ResponseEntity.ok(result);
         } catch (ErrorResultException exc) {
             return exc.toResponseEntity();
         }
@@ -268,37 +321,52 @@ public class AdminAPI {
     public ResponseEntity<ResultJson> deleteExtension(
             @PathVariable String namespaceName,
             @PathVariable String extensionName,
-            @RequestBody(required = false) List<TargetPlatformVersionJson> targetVersions
+            @RequestBody List<TargetPlatformVersionJson> targetVersions
     ) {
         try {
             var adminUser = admins.checkAdminUser();
-            return deleteExtension(adminUser, namespaceName, extensionName, targetVersions);
+            var result =  admins.deleteExtension(adminUser, namespaceName, extensionName, targetVersions);
+            return ResponseEntity.ok(result);
         } catch (ErrorResultException exc) {
             return exc.toResponseEntity();
         }
     }
 
-    private ResponseEntity<ResultJson> deleteExtension(
-            UserData adminUser,
-            String namespaceName,
-            String extensionName,
-            List<TargetPlatformVersionJson> targetVersions
+    @PostMapping(
+            path = "/admin/extension/{namespace}/{extension}/review/{provider}/{loginName}/delete",
+            produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    @CrossOrigin
+    @Operation(summary = "Delete a review for an extension by a user")
+    @ApiResponse(
+            responseCode = "200",
+            description = "A success message is returned in JSON format",
+            content = @Content(schema = @Schema(implementation = ResultJson.class))
+    )
+    @ApiResponse(
+            responseCode = "404",
+            description = "Extension not found",
+            content = @Content()
+    )
+    @ApiResponse(
+            responseCode = "404",
+            description = "Review not found",
+            content = @Content()
+    )
+    public ResponseEntity<ResultJson> deleteReview(
+            @PathVariable String namespace,
+            @PathVariable String extension,
+            @PathVariable String provider,
+            @PathVariable String loginName
     ) {
-        ResultJson result;
-        if(targetVersions == null) {
-            result = admins.deleteExtension(namespaceName, extensionName, adminUser);
-        } else {
-            var results = new ArrayList<ResultJson>();
-            for(var targetVersion : targetVersions) {
-                results.add(admins.deleteExtension(namespaceName, extensionName, targetVersion.targetPlatform(), targetVersion.version(), adminUser));
-            }
-
-            result = new ResultJson();
-            result.setError(results.stream().map(ResultJson::getError).filter(Objects::nonNull).collect(Collectors.joining("\n")));
-            result.setSuccess(results.stream().map(ResultJson::getSuccess).filter(Objects::nonNull).collect(Collectors.joining("\n")));
+        try {
+            var adminUser = admins.checkAdminUser();
+            var result = admins.deleteReview(namespace, extension, loginName, provider);
+            logs.logAction(adminUser, result);
+            return ResponseEntity.ok(result);
+        } catch (ErrorResultException exc) {
+            return exc.toResponseEntity();
         }
-
-        return ResponseEntity.ok(result);
     }
 
     @GetMapping(
@@ -478,6 +546,20 @@ public class AdminAPI {
         try {
             var adminUser = admins.checkAdminUser();
             var result = admins.revokePublisherContributions(provider, loginName, adminUser);
+            return ResponseEntity.ok(result);
+        } catch (ErrorResultException exc) {
+            return exc.toResponseEntity();
+        }
+    }
+
+    @PostMapping(
+            path = "/admin/publisher/{provider}/{loginName}/tokens/revoke",
+            produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<ResultJson> revokePublisherTokens(@PathVariable String loginName, @PathVariable String provider) {
+        try {
+            var adminUser = admins.checkAdminUser();
+            var result = admins.revokePublisherTokens(provider, loginName, adminUser);
             return ResponseEntity.ok(result);
         } catch (ErrorResultException exc) {
             return exc.toResponseEntity();

@@ -14,7 +14,9 @@ import org.eclipse.openvsx.entities.*;
 import org.eclipse.openvsx.repositories.RepositoryService;
 import org.eclipse.openvsx.util.TargetPlatform;
 import org.eclipse.openvsx.util.VersionAlias;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cache.CacheManager;
+import org.springframework.data.redis.cache.RedisCacheWriter;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -39,6 +41,7 @@ public class CacheService {
     public static final String GENERATOR_FILES = "filesCacheKeyGenerator";
 
     private final CacheManager cacheManager;
+    private final CacheManager fileCacheManager;
     private final RepositoryService repositories;
     private final ExtensionJsonCacheKeyGenerator extensionJsonCacheKey;
     private final LatestExtensionVersionCacheKeyGenerator latestExtensionVersionCacheKey;
@@ -46,12 +49,14 @@ public class CacheService {
 
     public CacheService(
             CacheManager cacheManager,
+            @Qualifier("fileCacheManager") CacheManager fileCacheManager,
             RepositoryService repositories,
             ExtensionJsonCacheKeyGenerator extensionJsonCacheKey,
             LatestExtensionVersionCacheKeyGenerator latestExtensionVersionCacheKey,
             FilesCacheKeyGenerator filesCacheKeyGenerator
     ) {
         this.cacheManager = cacheManager;
+        this.fileCacheManager = fileCacheManager;
         this.repositories = repositories;
         this.extensionJsonCacheKey = extensionJsonCacheKey;
         this.latestExtensionVersionCacheKey = latestExtensionVersionCacheKey;
@@ -97,6 +102,14 @@ public class CacheService {
             return; // cache is not created
         }
         if (extension.getVersions() == null) {
+            return;
+        }
+
+        // Special optimization in case of a redis cache: evict all keys that match the <namespace>.<extension>* pattern.
+        // This uses the redis KEYS command that might take a while but considering the typical size of the EXTENSION_JSON
+        // cache its acceptable.
+        if (cache instanceof RedisCacheWriter redisCache) {
+            redisCache.clean(CACHE_EXTENSION_JSON, extensionJsonCacheKey.generateWildcard(extension).getBytes());
             return;
         }
 
@@ -146,6 +159,14 @@ public class CacheService {
             return;
         }
 
+        // Special optimization in case of a redis cache: evict all keys that match the <namespace>.<extension>* pattern.
+        // This uses the redis KEYS command that might take a while but considering the typical size of the EXTENSION_JSON
+        // cache its acceptable.
+        if (cache instanceof RedisCacheWriter redisCache) {
+            redisCache.clean(CACHE_LATEST_EXTENSION_VERSION, latestExtensionVersionCacheKey.generateWildcard(extension).getBytes());
+            return;
+        }
+
         var targetPlatforms = new ArrayList<>(TargetPlatform.TARGET_PLATFORM_NAMES);
         targetPlatforms.add(null);
         for (var targetPlatform : targetPlatforms) {
@@ -170,7 +191,7 @@ public class CacheService {
     }
 
     public void evictExtensionFile(FileResource download) {
-        var cache = cacheManager.getCache(CACHE_EXTENSION_FILES);
+        var cache = fileCacheManager.getCache(CACHE_EXTENSION_FILES);
         if(cache == null) {
             return;
         }
@@ -180,7 +201,7 @@ public class CacheService {
 
     @Observed
     public void evictWebResourceFile(String namespaceName, String extensionName, String targetPlatform, String version, String path) {
-        var cache = cacheManager.getCache(CACHE_WEB_RESOURCE_FILES);
+        var cache = fileCacheManager.getCache(CACHE_WEB_RESOURCE_FILES);
         if(cache == null) {
             return;
         }

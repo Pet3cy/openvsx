@@ -11,13 +11,17 @@ package org.eclipse.openvsx;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.eclipse.openvsx.eclipse.EclipseService;
+import org.eclipse.openvsx.entities.ExtensionVersion;
 import org.eclipse.openvsx.entities.NamespaceMembership;
+import org.eclipse.openvsx.entities.ScanStatus;
 import org.eclipse.openvsx.entities.UserData;
 import org.eclipse.openvsx.json.*;
+import org.eclipse.openvsx.repositories.ExtensionScanRepository;
 import org.eclipse.openvsx.repositories.RepositoryService;
 import org.eclipse.openvsx.security.CodedAuthException;
 import org.eclipse.openvsx.storage.StorageUtilService;
 import org.eclipse.openvsx.util.ErrorResultException;
+import org.eclipse.openvsx.util.NamingUtil;
 import org.eclipse.openvsx.util.NotFoundException;
 import org.eclipse.openvsx.util.UrlUtil;
 import org.slf4j.Logger;
@@ -51,17 +55,26 @@ public class UserAPI {
     private final UserService users;
     private final EclipseService eclipse;
     private final StorageUtilService storageUtil;
+    private final LocalRegistryService local;
+    private final ExtensionService extensions;
+    private final ExtensionScanRepository scanRepository;
 
     public UserAPI(
             RepositoryService repositories,
             UserService users,
             EclipseService eclipse,
-            StorageUtilService storageUtil
+            StorageUtilService storageUtil,
+            LocalRegistryService local,
+            ExtensionService extensions,
+            ExtensionScanRepository scanRepository
     ) {
         this.repositories = repositories;
         this.users = users;
         this.eclipse = eclipse;
         this.storageUtil = storageUtil;
+        this.local = local;
+        this.extensions = extensions;
+        this.scanRepository = scanRepository;
     }
 
     @GetMapping(
@@ -114,7 +127,7 @@ public class UserAPI {
         json.setRole(user.getRole());
         json.setTokensUrl(createApiUrl(serverUrl, "user", "tokens"));
         json.setCreateTokenUrl(createApiUrl(serverUrl, "user", "token", "create"));
-        eclipse.enrichUserJson(json, user);
+        eclipse.enrichUserJsonWithPublisherAgreement(json, user);
         return json;
     }
 
@@ -201,9 +214,154 @@ public class UserAPI {
                     json.setPreview(latest.isPreview());
                     json.setActive(latest.getExtension().isActive());
                     json.setFiles(fileUrls.get(latest.getId()));
+                    
+                    // Add scan/review status information
+                    enrichWithReviewStatus(json, latest);
+                    
                     return json;
                 })
                 .toList();
+    }
+    
+    /**
+     * Add review/scan status information to the extension JSON.
+     * 
+     * This shows users the current state of their extension in simple terms:
+     * - "published" - Extension is active and publicly available
+     * - "under_review" - Extension is being reviewed (validation, scanning, etc.)
+     * - "rejected" - Extension was blocked (quarantined or rejected)
+     */
+    private void enrichWithReviewStatus(ExtensionJson json, ExtensionVersion extVersion) {
+        // Look up scan by extension metadata (namespace, name, version, platform)
+        var ext = extVersion.getExtension();
+        var scanResult = scanRepository.findFirstByNamespaceNameAndExtensionNameAndExtensionVersionAndTargetPlatformOrderByStartedAtDesc(
+            ext.getNamespace().getName(),
+            ext.getName(),
+            extVersion.getVersion(),
+            extVersion.getTargetPlatform()
+        );
+
+        if (Boolean.TRUE.equals(json.getActive())) {
+            // Only mark published if scan result indicates PASSED or no scan result exists (scanning disabled / manual activation)
+            if (scanResult == null || scanResult.getStatus() == ScanStatus.PASSED) {
+                json.setReviewStatus("published");
+                return;
+            }
+        }
+        
+        if (scanResult == null) {
+            // No scan result found - show as under review
+            json.setReviewStatus("under_review");
+            json.setReviewMessage("Your extension is being reviewed.");
+            return;
+        }
+        
+        // Map internal status to simple user-facing status
+        switch (scanResult.getStatus()) {
+            case STARTED:
+                json.setReviewStatus("under_review");
+                json.setReviewMessage("Your extension is being reviewed.");
+                break;
+            case VALIDATING:
+                json.setReviewStatus("under_review");
+                json.setReviewMessage("Your extension is being reviewed.");
+                break;
+            case SCANNING:
+                json.setReviewStatus("under_review");
+                json.setReviewMessage("Your extension is being reviewed.");
+                break;
+            case QUARANTINED:
+                // Check if admin has made a decision on this quarantined scan
+                var adminDecision = repositories.findAdminScanDecisionByScanId(scanResult.getId());
+                if (adminDecision != null) {
+                    if (adminDecision.isAllowed()) {
+                        // Admin allowed the extension - show as published if active
+                        if (Boolean.TRUE.equals(json.getActive())) {
+                            json.setReviewStatus("published");
+                        } else {
+                            // Allowed but not yet active (edge case)
+                            json.setReviewStatus("under_review");
+                            json.setReviewMessage("Your extension has been approved and will be published shortly.");
+                        }
+                    } else {
+                        // Admin blocked the extension
+                        json.setReviewStatus("under_review");
+                        json.setReviewMessage("Your extension is being reviewed. Please contact support for details.");
+                    }
+                } else {
+                    // No admin decision yet - still under review
+                    json.setReviewStatus("under_review");
+                    if (scanResult.getErrorMessage() != null) {
+                        json.setReviewMessage(scanResult.getErrorMessage());
+                    } else {
+                        json.setReviewMessage("Your extension is being reviewed. Please contact support for details.");
+                    }
+                }
+                break;
+            case REJECTED:
+                json.setReviewStatus("rejected");
+                if (scanResult.getErrorMessage() != null) {
+                    json.setReviewMessage(scanResult.getErrorMessage());
+                } else {
+                    json.setReviewMessage("Your extension could not be published. Please contact support for details.");
+                }
+                break;
+            case ERRORED:
+                json.setReviewStatus("under_review");
+                json.setReviewMessage("Your extension could not be published. Please contact support for details.");
+                break;
+            default:
+                json.setReviewStatus("under_review");
+                json.setReviewMessage("Your extension is being reviewed. Please contact support for details.");
+        }
+    }
+
+    @GetMapping(
+            path = "/user/extension/{namespaceName}/{extensionName}",
+            produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<ExtensionJson> getOwnExtension(@PathVariable String namespaceName, @PathVariable String extensionName) {
+        var user = users.findLoggedInUser();
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+
+        try {
+            ExtensionJson json;
+            var latest = repositories.findLatestVersion(user, namespaceName, extensionName);
+            if (latest != null) {
+                json = local.toExtensionVersionJson(latest, null, false);
+                json.setAllTargetPlatformVersions(repositories.findTargetPlatformsGroupedByVersion(latest.getExtension(), user));
+                json.setActive(latest.getExtension().isActive());
+            } else {
+                var error = "Extension not found: " + NamingUtil.toExtensionId(namespaceName, extensionName);
+                throw new ErrorResultException(error, HttpStatus.NOT_FOUND);
+            }
+            return ResponseEntity.ok(json);
+        } catch (ErrorResultException exc) {
+            return exc.toResponseEntity(ExtensionJson.class);
+        }
+    }
+
+    @PostMapping(
+            path = "/user/extension/{namespaceName}/{extensionName}/delete",
+            produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<ResultJson> deleteExtension(
+            @PathVariable String namespaceName,
+            @PathVariable String extensionName,
+            @RequestBody List<TargetPlatformVersionJson> targetVersions
+    ) {
+        var user = users.findLoggedInUser();
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        try {
+            var result = extensions.deleteExtension(namespaceName, extensionName, targetVersions, user);
+            return ResponseEntity.ok(result);
+        } catch (ErrorResultException exc) {
+            return exc.toResponseEntity();
+        }
     }
 
     @GetMapping(
